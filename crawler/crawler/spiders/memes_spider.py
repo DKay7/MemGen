@@ -1,34 +1,90 @@
 import scrapy
 import logging
 from tqdm import tqdm
-from ..items import CrawlerItem
-from scrapy.loader import ItemLoader
+from scrapy.exceptions import CloseSpider
 from scrapy.spiders import CrawlSpider, Rule
+from collections import defaultdict, Counter
 from scrapy.linkextractors import LinkExtractor
 
+MAX_MEMES_FOR_TEMPLATE = 512
+MAX_TEMPLATES = 128
+
+pbar = tqdm(total=MAX_MEMES_FOR_TEMPLATE*MAX_TEMPLATES)
 logging.getLogger('scrapy').propagate = False
-pbar = tqdm()
 
 
-class MemesSpider(CrawlSpider):
-    name = 'imgflip_spider'
-    start_urls = []
+class MemesSpider(scrapy.Spider):
+    name = 'imgflip'
+    start_urls = ['https://imgflip.com/memetemplates']
 
-    for page in range(1, 130988):
-        start_urls.append(f'https://imgflip.com/?sort=top-2020&page={page}')
+    memes_counter = Counter(defaultdict())
+    template_counter = 0
 
-    rules = (
-        Rule(LinkExtractor(restrict_css='div.base-img-wrap-wrap > div > a', allow=('/i/',)),
-             callback='parse_meme_page'),
-    )
 
-    def parse_meme_page(self, response):
-        pbar.update(1)
-        loader = ItemLoader(item=CrawlerItem(), response=response)
+    def parse(self, response, **kwargs):
+        urls = response.xpath('//div[@class="mt-box"]/h3[@class="mt-title"]/a/@href').extract()
 
-        loader.add_css('image_url', '#im::attr(src)')
-        loader.add_css('template_url', '#img-main > a > img::attr(src)')
-        loader.add_css('image_alt', '#im::attr(alt)')
-        loader.add_css('image_desc', 'div.img-desc::text')
+        for url in urls:
+            url = response.urljoin(url)
+            self.template_counter += 1
 
-        yield loader.load_item()
+            if self.template_counter <= MAX_TEMPLATES:
+                yield response.follow(url=url, callback=self.parse_memes_page)
+
+            else:
+                CloseSpider(reason='Max template number was reached')
+                return
+
+        next_page_xpath = '//div[@class="pager"]/a[@class="pager-next l but"]/@href'
+        next_page = response.xpath(next_page_xpath).extract_first()
+
+        if next_page:
+            yield response.follow(url=next_page, callback=self.parse)
+
+    def parse_memes_page(self, response):
+        template_name_xpath = '//div[@id="page"]/h1/text()'
+        template_name = response.xpath(template_name_xpath).extract_first()
+
+        template_url_xpath = '//div[@id="base-right"]/div[@class="ibox"]/a[@class="meme-link"][1]/img/@src'
+        template_url = response.xpath(template_url_xpath).extract_first()
+
+        if (template_name and template_url):
+
+            for a in response.xpath('//div[@class="base-unit clearfix"]/h2/a/@href').extract():
+                if self.memes_counter[template_name] < MAX_MEMES_FOR_TEMPLATE:
+                    template_url = response.urljoin(template_url)
+
+                    yield response.follow(url=a, callback=self.parse_one_meme,
+                                          cb_kwargs={'meme_template_name': template_name,
+                                                     'meme_template_url': template_url})
+                else:
+                    return
+
+            next_page_xpath = '//div[@class="pager"]/a[@class="pager-next l but"]/@href'
+            next_page = response.xpath(next_page_xpath).extract_first()
+
+            if next_page:
+                yield response.follow(url=next_page, callback=self.parse_memes_page)
+
+    def parse_one_meme(self, response, meme_template_name=None, meme_template_url=None):
+        description = response.xpath('//div[@class="img-desc"]/text()').extract()
+
+        if description and self.memes_counter[meme_template_name] < MAX_MEMES_FOR_TEMPLATE:
+            pbar.update(1)
+            self.memes_counter[meme_template_name] += 1
+
+            description = ' '.join(description).strip()
+
+            src = response.xpath('//img[@id="im"]/@src').extract_first()
+            url = response.urljoin(src)
+
+            yield {
+                'meme_template_name': meme_template_name,
+                'meme_template_url': meme_template_url,
+                'meme_url': url,
+                'meme_description': description,
+                'template_path': None
+            }
+
+        else:
+            return

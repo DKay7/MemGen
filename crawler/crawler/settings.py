@@ -6,6 +6,7 @@
 #     https://docs.scrapy.org/en/latest/topics/settings.html
 #     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
+import os
 
 BOT_NAME = 'crawler'
 
@@ -64,8 +65,10 @@ ROBOTSTXT_OBEY = True
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 ITEM_PIPELINES = {
    'crawler.pipelines.CrawlerPipeline': 300,
+   'crawler.pipelines.SaveImagesPipeline': 299,
 }
-
+IMAGE_PATH = 'memes_templates'
+IMAGES_STORE = os.path.join(os.path.dirname(__file__), IMAGE_PATH)
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/autothrottle.html
 #AUTOTHROTTLE_ENABLED = True
