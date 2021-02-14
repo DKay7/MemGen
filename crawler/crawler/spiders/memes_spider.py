@@ -2,15 +2,15 @@ import scrapy
 import logging
 from tqdm import tqdm
 from scrapy.exceptions import CloseSpider
-from scrapy.spiders import CrawlSpider, Rule
 from collections import defaultdict, Counter
-from scrapy.linkextractors import LinkExtractor
+from settings import MAX_MEMES_FOR_TEMPLATE, MAX_TEMPLATES, MAX_DESCRIPTION_LEN
 
-MAX_MEMES_FOR_TEMPLATE = 512
-MAX_TEMPLATES = 128
 
 pbar = tqdm(total=MAX_MEMES_FOR_TEMPLATE*MAX_TEMPLATES)
+
 logging.getLogger('scrapy').propagate = False
+logging.getLogger('PIL').setLevel(logging.WARNING)
+
 
 
 class MemesSpider(scrapy.Spider):
@@ -57,8 +57,10 @@ class MemesSpider(scrapy.Spider):
                     yield response.follow(url=a, callback=self.parse_one_meme,
                                           cb_kwargs={'meme_template_name': template_name,
                                                      'meme_template_url': template_url})
+
                 else:
                     return
+
 
             next_page_xpath = '//div[@class="pager"]/a[@class="pager-next l but"]/@href'
             next_page = response.xpath(next_page_xpath).extract_first()
@@ -66,14 +68,16 @@ class MemesSpider(scrapy.Spider):
             if next_page:
                 yield response.follow(url=next_page, callback=self.parse_memes_page)
 
+
     def parse_one_meme(self, response, meme_template_name=None, meme_template_url=None):
         description = response.xpath('//div[@class="img-desc"]/text()').extract()
+        description = ' '.join(description).strip()
 
-        if description and self.memes_counter[meme_template_name] < MAX_MEMES_FOR_TEMPLATE:
+        if description and len(description) <= MAX_DESCRIPTION_LEN and\
+           self.memes_counter[meme_template_name] < MAX_MEMES_FOR_TEMPLATE:
+
             pbar.update(1)
             self.memes_counter[meme_template_name] += 1
-
-            description = ' '.join(description).strip()
 
             src = response.xpath('//img[@id="im"]/@src').extract_first()
             url = response.urljoin(src)

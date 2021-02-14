@@ -2,10 +2,12 @@ import os
 import re
 import scrapy
 import pandas as pd
+from PIL import Image
 from io import BytesIO
 from pathlib import Path
 from itemadapter import ItemAdapter
 from scrapy.pipelines.images import ImagesPipeline
+from settings import MIN_MEMES_FOR_TEMPLATE, IMAGE_QUALITY, DATASET_PATH
 
 
 class CrawlerPipeline:
@@ -23,15 +25,17 @@ class CrawlerPipeline:
         if description is not None:
             description = description.lower()
             description = re.sub(r'\n', ' ', description)
-            description = re.sub(r'[^A-z0-9!?.,_\-; ] ', '', description)
-            item['meme_description'] = description.strip().strip()
+            description = re.sub(r'[^A-z0-9!?.,_\-;:* ] ', '', description)
+            item['meme_description'] = description.strip()
 
         if template_name is not None:
+            template_name = item['meme_template_name']
             template_name = template_name.lower()
             template_name = re.sub(r'\n', ' ', template_name)
-            template_name = re.sub(r'[^A-z0-9!?.,_\-; ] ', '', template_name)
+            template_name = re.sub(r'[^A-z0-9_ ]', '', template_name).strip()
+            template_name = template_name.replace(' ', '_')
 
-            item['meme_template_name'] = template_name.strip()
+        item['meme_template_name'] = template_name.strip()
 
         return item
 
@@ -47,7 +51,18 @@ class CrawlerPipeline:
         self.memes_df.drop(self.memes_df[query].index, inplace=True)
         self.memes_df.reset_index(drop=True, inplace=True)
 
-        self.memes_df.to_csv('memes_dataset.csv', sep=',', encoding='utf-8', index=False)
+        counts = self.memes_df['meme_template_name'].value_counts().to_dict()
+
+        for key, value in counts.items():
+            if value < MIN_MEMES_FOR_TEMPLATE:
+                query = (self.memes_df['meme_template_name'] == key)
+                self.memes_df.drop(self.memes_df[query].index, inplace=True)
+
+        self.memes_df.reset_index(drop=True, inplace=True)
+        self.memes_df.to_csv(DATASET_PATH, sep=',', encoding='utf-8', index=False)
+
+        print(f"Spider closed")
+        print(f"Total unique templates: {self.memes_df['meme_template_name'].unique()}")
 
 
 class SaveImagesPipeline(ImagesPipeline):
@@ -56,10 +71,11 @@ class SaveImagesPipeline(ImagesPipeline):
         template_name = template_name.lower()
         template_name = re.sub(r'\n', ' ', template_name)
         template_name = re.sub(r'[^A-z0-9_ ]', '', template_name).strip()
-        template_name = re.sub(r' ', '_', template_name)
-        item['meme_template_name'] = template_name
+        template_name = template_name.replace(' ', '_')
+
 
         _, extension = os.path.splitext(item['meme_template_url'])
+
         path = Path(template_name).with_suffix(extension)
         return str(path)
 
@@ -72,11 +88,13 @@ class SaveImagesPipeline(ImagesPipeline):
             background = Image.new('RGBA', image.size, (255, 255, 255))
             background.paste(image, image)
             image = background.convert('RGB')
+
         elif image.mode == 'P':
             image = image.convert("RGBA")
             background = Image.new('RGBA', image.size, (255, 255, 255))
             background.paste(image, image)
             image = background.convert('RGB')
+
         elif image.mode != 'RGB':
             image = image.convert('RGB')
 
@@ -85,8 +103,8 @@ class SaveImagesPipeline(ImagesPipeline):
             image.thumbnail(size, Image.ANTIALIAS)
 
         buf = BytesIO()
+        image.save(buf, 'JPEG', quality=IMAGE_QUALITY)
 
-        image.save(buf, image.format, quality=32)
         return image, buf
 
     def item_completed(self, results, item, info):

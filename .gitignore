@@ -3,7 +3,7 @@
 # Но позволяем рекурсивно заходить в папки
 !*/
 *crawler_venv/*
-!crawler/crawler/memes_templates/*
+!gpt2-generator/*
 # а также следим за следующими файлами
 !*.py
 !*.csv
